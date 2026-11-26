@@ -315,7 +315,7 @@ struct DiscStage: View {
                             .offset(y: isCurrent && !layered ? (1 - arrive) * travel : 0)
                             .offset(x: !isCurrent && !layered ? -leave * exitDistance : 0)
                             .opacity(!isCurrent && !layered ? 1 - Double(leave) * 0.4 : 1)
-                        info(c)
+                        info(c, current: isCurrent)
                             .frame(width: max(side + 60, 300), height: Metrics.infoHeight, alignment: .top)
                             // The new title is uncovered from the disc's lower edge down as the disc rises past it.
                             .mask(alignment: .top) {
@@ -416,14 +416,24 @@ struct DiscStage: View {
         }
     }
 
-    private func info(_ c: AlbumCard) -> some View {
-        VStack(spacing: 5) {
-            Text(c.title)
-                .font(.title2.weight(.semibold)).tone(.primary)
-                .multilineTextAlignment(.center)
-                .lineLimit(1)
-            if let s = c.subtitle {
-                Text(s).font(c.isEmpty ? .callout : .body).tone(.secondary).lineLimit(1)
+    /// Below the disc: the album while the CD is still. Once it plays, the track takes the first line
+    /// and the album moves to the second, before the artist. Texts change in place, never moving: the
+    /// old one fades out blurring, the new one fades in coming into focus.
+    private func info(_ c: AlbumCard, current: Bool) -> some View {
+        let track = current && player.state != .stopped ? player.current : nil
+        let title = track?.title ?? c.title
+        let subtitle: String? = track != nil ? ([c.title] + [c.subtitle].compactMap { $0 }).joined(separator: " · ") : c.subtitle
+        return VStack(spacing: 5) {
+            BlurSwap(value: title) {
+                Text(title)
+                    .font(.title2.weight(.semibold)).tone(.primary)
+                    .multilineTextAlignment(.center)
+                    .lineLimit(1)
+            }
+            if let s = subtitle {
+                BlurSwap(value: s) {
+                    Text(s).font(c.isEmpty ? .callout : .body).tone(.secondary).lineLimit(1)
+                }
             }
             if let d = c.details {
                 Text(d).font(.callout).monospacedDigit().tone(.tertiary).lineLimit(1).padding(.top, 3)
@@ -477,4 +487,33 @@ struct CornerButton: View {
         .allowsHitTesting(shown)
         .padding(2)
     }
+}
+
+
+/// Shows `content` for the current `value`; when the value changes, the old text fades out blurring and
+/// the new one fades in coming into focus, in the same place (no slide).
+struct BlurSwap<Content: View>: View {
+    let value: String
+    @ViewBuilder var content: () -> Content
+
+    var body: some View {
+        ZStack {
+            content()
+                .id(value)
+                .transition(.asymmetric(insertion: .blurFade.animation(.easeOut(duration: 0.42).delay(0.12)),
+                                        removal: .blurFade.animation(.easeIn(duration: 0.22))))
+        }
+        .animation(.easeInOut(duration: 0.4), value: value)
+    }
+}
+
+struct BlurFadeModifier: ViewModifier {
+    let hidden: Bool
+    func body(content: Content) -> some View {
+        content.opacity(hidden ? 0 : 1).blur(radius: hidden ? 7 : 0)
+    }
+}
+
+extension AnyTransition {
+    static var blurFade: AnyTransition { .modifier(active: BlurFadeModifier(hidden: true), identity: BlurFadeModifier(hidden: false)) }
 }

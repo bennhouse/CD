@@ -56,6 +56,8 @@ struct QueuePanel: View {
                              current: current, playing: player.state == .playing,
                              failed: player.failed.contains(t.id)) { player.jump(to: t.id) }
                         .listRowSeparator(.hidden)
+                        // No gaps between rows: each row's hover area reaches the next row.
+                        .listRowInsets(EdgeInsets(top: 0, leading: 10, bottom: 0, trailing: 10))
                         .listRowBackground(
                             RoundedRectangle(cornerRadius: 6, style: .continuous)
                                 .fill(.tint.opacity(current ? 0.16 : 0))
@@ -127,7 +129,8 @@ struct QueueRow: View {
             Spacer(minLength: 6)
             Text(failed ? "Can't play" : Format.time(track.duration)).monospacedDigit().font(.callout).tone(.secondary)
         }
-        .padding(.vertical, 3)
+        .padding(.vertical, 6)
+        .frame(maxWidth: .infinity)
         .contentShape(Rectangle())
         .onHover { h in withAnimation(.easeOut(duration: 0.12)) { hover = h } }
         // Test aid: CD_ROWHOVER=<n> shows row n as hovered.
