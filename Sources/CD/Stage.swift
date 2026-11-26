@@ -13,11 +13,11 @@ enum Metrics {
     static let queueWidth: CGFloat = 240
     /// The title bar needs this much for the volume and the four transport buttons.
     static let minColumn: CGFloat = 330
-    static let minHeight: CGFloat = 330
+    static let minHeight: CGFloat = 345
     static let infoHeight: CGFloat = 86
     static let spacing: CGFloat = 17
-    static let discMax: CGFloat = 294
-    static let discMin: CGFloat = 120
+    static let discMax: CGFloat = 323
+    static let discMin: CGFloat = 132
     /// How far around the disc's square the pointer still counts as hovering it.
     static let hoverMargin: CGFloat = 48
 }
@@ -244,7 +244,7 @@ struct DiscStage: View {
 
     var body: some View {
         GeometryReader { geo in
-            let side = max(Metrics.discMin, min(Metrics.discMax, min(geo.size.width - 56, geo.size.height - Metrics.infoHeight - Metrics.spacing - 45)))
+            let side = max(Metrics.discMin, min(Metrics.discMax, min(geo.size.width - 50, geo.size.height - Metrics.infoHeight - Metrics.spacing - 40)))
             let top = max(14, (geo.size.height - side - Metrics.spacing - Metrics.infoHeight) / 2)
             // From its place to just below the bottom of the window.
             let travel = geo.size.height - top + 12
@@ -278,7 +278,7 @@ struct DiscStage: View {
                     .zIndex(isCurrent ? 1 : 0)
                 }
                 // Hover anywhere around the disc (its square plus a wide margin), whatever is in it: the CD
-                // lifts and the corner buttons appear. No tooltips here. A click on the empty housing opens a
+                // lifts and the corner buttons appear. No tooltips here. A click on the CD plays or pauses it; on the empty housing it opens a
                 // folder too.
                 let canChange = player.state != .playing
                 let margin = Metrics.hoverMargin
@@ -286,7 +286,10 @@ struct DiscStage: View {
                     Color.clear
                         .frame(width: side, height: side)
                         .contentShape(DiscShape(), eoFill: true)
-                        .onTapGesture { if canChange && card.isEmpty { Actions.open() } }
+                        // Click the CD to play it (and again to pause); click the empty housing to open one.
+                        .onTapGesture {
+                            if card.isEmpty { if canChange { Actions.open() } } else { player.togglePlayPause() }
+                        }
                         .overlay(alignment: .topLeading) {
                             CornerButton(symbol: card.isEmpty ? "folder" : "arrow.triangle.2.circlepath", shown: hover, delay: 0) {
                                 Actions.open()
