@@ -6,12 +6,14 @@ import SwiftUI
 /// render server does the work, not the app): it speeds up from rest with an ease-in, then spins at a
 /// constant speed, and slows down to rest when playback pauses or stops. Every change of speed starts
 /// from the angle and speed the disc has at that moment, so nothing jumps.
-/// Hover shading, the "Change CD" label, the small shift to the left and the shadow are layers of the
-/// same view, so they move and fade as one piece with the disc.
+/// On hover the disc lifts off the window: its shadow fades in and it grows a little, with a small
+/// "Change CD" label. Shadow, label and disc are layers of one view, so they move as one piece.
 struct DiscView: NSViewRepresentable {
     var cover: CGImage
     var spinning: Bool
-    var shaded = false
+    var lifted = false
+    /// False for a CD that is leaving: it drops back at once, with no shadow.
+    var animateLift = true
     var label = "Change CD"
 
     func makeNSView(context: Context) -> DiscNSView { DiscNSView() }
@@ -19,7 +21,7 @@ struct DiscView: NSViewRepresentable {
     func updateNSView(_ v: DiscNSView, context: Context) {
         v.setCover(cover)
         v.setSpinning(spinning)
-        v.setShaded(shaded, label: label)
+        v.setLifted(lifted, label: label, animated: animateLift)
     }
 }
 
@@ -37,14 +39,15 @@ struct DiscShape: Shape {
 }
 
 final class DiscNSView: NSView {
+    /// Holds the disc, its shadow and the label; scaled as one when the disc lifts.
+    private let stack = CALayer()
     private let shadowLayer = CALayer()
     private let disc = CALayer()
-    private let shade = CAShapeLayer()
     private let labelLayer = CALayer()
-    private var shaded = false
+    private var lifted = false
     private var labelText = ""
-    /// Shift to the left while shaded, points.
-    static let shift: CGFloat = 16
+    /// Size while lifted.
+    static let liftScale: CGFloat = 1.035
     private var cover: CGImage?
     private var faceSize: CGFloat = 0
     private var hasFace = false
@@ -63,57 +66,73 @@ final class DiscNSView: NSView {
         wantsLayer = true
         layer = CALayer()
         layer?.masksToBounds = false
-        for l in [shadowLayer, disc, shade, labelLayer] { layer?.addSublayer(l) }
+        layer?.addSublayer(stack)
+        for l in [shadowLayer, disc, labelLayer] { stack.addSublayer(l) }
         disc.contentsGravity = .resizeAspect
+        // At rest the disc lies flat in its housing: no shadow. Lifted, a soft shadow below it.
         shadowLayer.shadowColor = NSColor.black.cgColor
-        shadowLayer.shadowOpacity = 0.22
-        shadowLayer.shadowRadius = 14
-        shadowLayer.shadowOffset = CGSize(width: 0, height: -6)
-        shade.fillRule = .evenOdd
-        shade.fillColor = NSColor(white: 0, alpha: 0.45).cgColor
-        shade.opacity = 0
+        shadowLayer.shadowOpacity = 0.32
+        shadowLayer.shadowRadius = 18
+        shadowLayer.shadowOffset = CGSize(width: 0, height: -9)
+        shadowLayer.opacity = 0
         labelLayer.opacity = 0
         labelLayer.contentsGravity = .center
     }
 
-    /// Darkens the disc, shows the label and moves everything a little to the left (or back).
-    func setShaded(_ on: Bool, label: String) {
+    /// Lifts the disc (shadow fades in, slightly larger, label shown) or lays it back down.
+    func setLifted(_ on: Bool, label: String, animated: Bool = true) {
         if label != labelText { labelText = label; renderLabel() }
-        guard on != shaded else { return }
-        shaded = on
-        let dur = 0.28
+        guard on != lifted else { return }
+        lifted = on
+        if !animated {
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            stack.removeAnimation(forKey: "lift")
+            shadowLayer.opacity = on ? 1 : 0
+            labelLayer.opacity = on ? 1 : 0
+            stack.transform = on ? CATransform3DMakeScale(Self.liftScale, Self.liftScale, 1) : CATransform3DIdentity
+            CATransaction.commit()
+            return
+        }
+        let dur = 0.3
         let timing = CAMediaTimingFunction(controlPoints: 0.3, 0, 0.2, 1)
         CATransaction.begin()
         CATransaction.setAnimationDuration(dur)
         CATransaction.setAnimationTimingFunction(timing)
-        shade.opacity = on ? 1 : 0
+        shadowLayer.opacity = on ? 1 : 0
         labelLayer.opacity = on ? 1 : 0
         CATransaction.commit()
-        // The whole stack moves together: one transform on the parent of every layer.
-        guard let root = layer else { return }
-        let from = (root.presentation()?.sublayerTransform ?? root.sublayerTransform)
-        let to = on ? CATransform3DMakeTranslation(-Self.shift, 0, 0) : CATransform3DIdentity
-        let a = CABasicAnimation(keyPath: "sublayerTransform")
-        a.fromValue = NSValue(caTransform3D: from)
-        a.toValue = NSValue(caTransform3D: to)
-        a.duration = dur
-        a.timingFunction = timing
-        root.sublayerTransform = to
-        root.add(a, forKey: "shift")
+        let from = stack.presentation()?.transform ?? stack.transform
+        let to = on ? CATransform3DMakeScale(Self.liftScale, Self.liftScale, 1) : CATransform3DIdentity
+        let anim = CABasicAnimation(keyPath: "transform")
+        anim.fromValue = NSValue(caTransform3D: from)
+        anim.toValue = NSValue(caTransform3D: to)
+        anim.duration = dur
+        anim.timingFunction = timing
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        stack.transform = to
+        CATransaction.commit()
+        stack.add(anim, forKey: "lift")
     }
 
     private func renderLabel() {
         let scale = window?.backingScaleFactor ?? 2
         let font = NSFont.systemFont(ofSize: 13, weight: .semibold)
         let text = NSAttributedString(string: labelText, attributes: [.font: font, .foregroundColor: NSColor.white])
-        let cfg = NSImage.SymbolConfiguration(pointSize: 24, weight: .medium).applying(.init(paletteColors: [.white]))
+        let cfg = NSImage.SymbolConfiguration(pointSize: 12, weight: .semibold).applying(.init(paletteColors: [.white]))
         let symbol = NSImage(systemSymbolName: "eject.fill", accessibilityDescription: nil)?.withSymbolConfiguration(cfg)
         let ts = text.size()
         let ss = symbol?.size ?? .zero
-        let size = NSSize(width: ceil(max(ts.width, ss.width)) + 4, height: ceil(ss.height + 6 + ts.height))
-        let img = NSImage(size: size, flipped: false) { _ in
-            symbol?.draw(in: NSRect(x: (size.width - ss.width) / 2, y: ts.height + 6, width: ss.width, height: ss.height))
-            text.draw(at: NSPoint(x: (size.width - ts.width) / 2, y: 0))
+        // One line in a small dark capsule, readable on any cover.
+        let pad: CGFloat = 12, gap: CGFloat = 6
+        let h = ceil(max(ts.height, ss.height)) + 10
+        let size = NSSize(width: ceil(pad + ss.width + gap + ts.width + pad), height: h)
+        let img = NSImage(size: size, flipped: false) { r in
+            NSColor(white: 0, alpha: 0.55).setFill()
+            NSBezierPath(roundedRect: r, xRadius: h / 2, yRadius: h / 2).fill()
+            symbol?.draw(in: NSRect(x: pad, y: (h - ss.height) / 2, width: ss.width, height: ss.height))
+            text.draw(at: NSPoint(x: pad + ss.width + gap, y: (h - ts.height) / 2))
             return true
         }
         labelLayer.contents = img.layerContents(forContentsScale: scale)
@@ -131,18 +150,21 @@ final class DiscNSView: NSView {
         let side = min(bounds.width, bounds.height)
         let full = CGRect(x: 0, y: 0, width: side, height: side)
         let centre = CGPoint(x: bounds.midX, y: bounds.midY)
-        for l in [shadowLayer, disc, shade] as [CALayer] {
+        // The stack is scaled about its centre when the disc lifts.
+        stack.bounds = bounds
+        stack.position = centre
+        let local = CGPoint(x: bounds.width / 2, y: bounds.height / 2)
+        for l in [shadowLayer, disc] as [CALayer] {
             l.bounds = full
-            l.position = centre
+            l.position = local
         }
         let ring = CGMutablePath()
         ring.addEllipse(in: full)
         let h = side * Face.hole
         ring.addEllipse(in: CGRect(x: side / 2 - h, y: side / 2 - h, width: 2 * h, height: 2 * h))
-        shade.path = ring
         shadowLayer.shadowPath = ring
         // Below the hole, as before.
-        labelLayer.position = CGPoint(x: centre.x, y: centre.y - side * 0.21)
+        labelLayer.position = CGPoint(x: local.x, y: local.y - side * 0.24)
         CATransaction.commit()
         if abs(side - faceSize) > 1 || !hasFace { renderFace(side) }
     }

@@ -231,8 +231,6 @@ struct DiscStage: View {
     @State private var arrive: CGFloat = 1
     @State private var leave: CGFloat = 0
     @State private var hover = false
-    /// The album whose disc is shaded: the hovered one, kept while it is ejected.
-    @State private var shaded: UUID?
 
     var body: some View {
         GeometryReader { geo in
@@ -241,6 +239,8 @@ struct DiscStage: View {
             // From its place to just below the bottom of the window.
             let travel = geo.size.height - top + 12
             ZStack(alignment: .top) {
+                // The housing: the empty, frosted disc the CDs go into. It never moves, lifts or casts a shadow.
+                Housing(side: side, prompt: card.isEmpty && hover)
                 // Keyed by album, so the disc that leaves is the very view that was on screen (same angle).
                 ForEach([leaving, card].compactMap { $0 }) { c in
                     let isCurrent = c.id == card.id
@@ -260,6 +260,15 @@ struct DiscStage: View {
                     .opacity(isCurrent ? 1 : 1 - Double(leave) * 0.4)
                     .zIndex(isCurrent ? 1 : 0)
                 }
+                // Hover and click on the disc's place, whatever is in it.
+                let canChange = player.state != .playing
+                Color.clear
+                    .frame(width: side, height: side)
+                    .contentShape(DiscShape(), eoFill: true)
+                    .onHover { h in withAnimation(.timingCurve(0.3, 0, 0.2, 1, duration: 0.3)) { hover = h && canChange } }
+                    .onTapGesture { if canChange { Actions.open() } }
+                    .help(canChange ? (card.isEmpty ? "Open Album…" : "Change CD…") : "")
+                    .zIndex(2)
             }
             .frame(width: geo.size.width, height: geo.size.height, alignment: .top)
             .padding(.top, top)
@@ -274,7 +283,6 @@ struct DiscStage: View {
     }
 
     private func swap(to new: AlbumCard) {
-        let wasHovered = hover
         var t = Transaction()
         t.disablesAnimations = true
         withTransaction(t) {
@@ -283,7 +291,6 @@ struct DiscStage: View {
             card = new
             arrive = 0
             hover = false
-            shaded = wasHovered ? leaving?.id : nil
         }
         let old = leaving?.id
         // Next frame, from those starting values: the old disc speeds away, the new one comes in fast
@@ -295,43 +302,28 @@ struct DiscStage: View {
         }
     }
 
+    /// A CD: the cover on a disc, lifted while hovered.
+    /// The empty card has no CD: only the housing shows.
     @ViewBuilder
     private func disc(_ c: AlbumCard, side: CGFloat, current: Bool) -> some View {
-        let canChange = current && player.state != .playing
-        let isShaded = (current && hover) || (!current && shaded == c.id)
-        let label = c.isEmpty ? "Open Album" : "Change CD"
-        Group {
-            if let cover = c.cover {
-                // Shade, label, shift and shadow are drawn by the disc view itself, in step with it.
-                DiscView(cover: cover, spinning: current && player.state == .playing, shaded: isShaded, label: label)
-            } else {
-                // The empty disc is all SwiftUI, so one modifier moves all of it.
-                ZStack {
-                    DiscShape().fill(.regularMaterial, style: FillStyle(eoFill: true))
-                        .overlay(DiscShape().stroke(Color.primary.opacity(0.08), lineWidth: 1))
-                    DiscShape().fill(Color.black.opacity(isShaded ? 0.45 : 0), style: FillStyle(eoFill: true))
-                    VStack(spacing: 6) {
-                        Image(systemName: "eject.fill").font(.system(size: 24, weight: .medium))
-                        Text(label).font(.system(size: 13, weight: .semibold))
-                    }
-                    .foregroundStyle(.white)
-                    .opacity(isShaded ? 1 : 0)
-                    .offset(y: side * 0.21)
-                }
-                .compositingGroup()
-                .shadow(color: .black.opacity(0.18), radius: 14, y: 6)
-                // No CD in: it darkens but stays put (only a loaded CD moves aside to be changed).
-            }
+        // Shadow and lift only while hovered: never at rest, never on a CD that is leaving.
+        let lifted = current && hover
+        if let cover = c.cover {
+            DiscView(cover: cover, spinning: current && player.state == .playing, lifted: lifted, animateLift: current)
+                .frame(width: side, height: side)
+                .allowsHitTesting(false)
+        } else if !c.isEmpty {
+            // An album without a cover: a plain light disc, which lifts like the others.
+            DiscShape().fill(Color(nsColor: .controlBackgroundColor), style: FillStyle(eoFill: true))
+                .overlay(DiscShape().stroke(Color.primary.opacity(0.1), lineWidth: 1))
+                .shadow(color: .black.opacity(lifted ? 0.32 : 0), radius: 18, y: 9)
+                .scaleEffect(lifted ? DiscNSView.liftScale : 1)
+                .transaction { if !current { $0.animation = nil } }
+                .frame(width: side, height: side)
+                .allowsHitTesting(false)
+        } else {
+            Color.clear.frame(width: side, height: side)
         }
-        .frame(width: side, height: side)
-        .contentShape(DiscShape(), eoFill: true)
-        .onHover { h in
-            guard current else { return }
-            // The empty disc animates in SwiftUI; the cover disc animates its own layers.
-            withAnimation(.timingCurve(0.3, 0, 0.2, 1, duration: 0.28)) { hover = h && canChange }
-        }
-        .onTapGesture { if canChange { Actions.open() } }
-        .help(canChange ? (c.isEmpty ? "Open Album…" : "Change CD…") : "")
     }
 
     private func info(_ c: AlbumCard) -> some View {
@@ -347,5 +339,26 @@ struct DiscStage: View {
                 Text(d).font(.callout).monospacedDigit().tone(.tertiary).lineLimit(1).padding(.top, 3)
             }
         }
+    }
+}
+
+
+/// Where the CD goes: a frosted, recessed disc. On hover with no CD in, it offers to open one.
+struct Housing: View {
+    let side: CGFloat
+    let prompt: Bool
+
+    var body: some View {
+        ZStack {
+            DiscShape().fill(.regularMaterial, style: FillStyle(eoFill: true))
+            // A faint inner edge: a hollow, not a raised disc.
+            DiscShape().stroke(Color.primary.opacity(0.10), lineWidth: 1)
+            Label("Open Album", systemImage: "eject.fill")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .opacity(prompt ? 1 : 0)
+                .offset(y: side * 0.24)
+        }
+        .frame(width: side, height: side)
     }
 }

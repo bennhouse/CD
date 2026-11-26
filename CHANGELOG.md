@@ -2,7 +2,8 @@
 
 ## Unreleased
 
-- Hovering the empty disc darkens it without moving it; only a loaded CD moves aside to be changed.
+- The disc no longer darkens or moves aside on hover: a loaded CD lifts off the window instead (its shadow fades in and it grows slightly, with a small "Change CD" label). At rest, while leaving, and with no CD in, there is no shadow.
+- The empty frosted disc is the housing: it stays in place, never lifts, and CDs leave and arrive over it.
 
 ## 1.0
 
