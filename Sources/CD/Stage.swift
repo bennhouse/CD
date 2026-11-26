@@ -320,7 +320,7 @@ struct DiscStage: View {
                 }
                 .compositingGroup()
                 .shadow(color: .black.opacity(0.18), radius: 14, y: 6)
-                .offset(x: isShaded ? -DiscNSView.shift : 0)
+                // No CD in: it darkens but stays put (only a loaded CD moves aside to be changed).
             }
         }
         .frame(width: side, height: side)

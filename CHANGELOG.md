@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Hovering the empty disc darkens it without moving it; only a loaded CD moves aside to be changed.
+
 ## 1.0
 
 First release.
