@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Previous and next track use the double-arrow symbols of Apple Music.
 - Below the disc: the album while the CD is still; once it plays, the track's title on the first line and the album before the artist on the second. Texts change in place, fading and blurring out and back into focus, without sliding.
 - Queue rows have no gaps: each track's hover area reaches the next track.
 - The queue first takes the room the window already has; the window grows only by what is missing to reach about 430 pt of disc column plus the queue, and gives exactly that back when the queue goes. The queue is a little wider (270 pt).

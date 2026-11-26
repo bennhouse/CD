@@ -17,9 +17,9 @@ CD plays an album the way a CD player does: you drop in a folder, the cover appe
 | | Title bar | Keyboard |
 | --- | --- | --- |
 | Volume | slider on the left (full = the normal level) | |
-| Previous track | ⏮ (back to the start of the track if it has played for more than 3 s) | ⌘← |
+| Previous track | ⏪ (back to the start of the track if it has played for more than 3 s) | ⌘← |
 | Play / Pause | ▶ / ⏸ | Space |
-| Next track | ⏭ | ⌘→ |
+| Next track | ⏩ | ⌘→ |
 | Stop | ■ | ⌘. |
 
 The media keys on the keyboard and the Now Playing controls in Control Center are supported too, with the cover and the track shown there.

@@ -195,7 +195,7 @@ struct ContentView: View {
             // Flexible space: volume on the left, the transport on the right.
             ToolbarItem(placement: .automatic) { Spacer() }
             ToolbarItemGroup(placement: .automatic) {
-                Button { player.previous() } label: { Image(systemName: "backward.end.fill").toolbarIcon() }
+                Button { player.previous() } label: { Image(systemName: "backward.fill").toolbarIcon() }
                     .help("Previous Track")
                     .disabled(player.state == .stopped)
                 Button { player.togglePlayPause() } label: {
@@ -204,7 +204,7 @@ struct ContentView: View {
                 }
                     .help(player.state == .playing ? "Pause" : "Play")
                     .disabled(player.tracks.isEmpty)
-                Button { player.skip() } label: { Image(systemName: "forward.end.fill").toolbarIcon() }
+                Button { player.skip() } label: { Image(systemName: "forward.fill").toolbarIcon() }
                     .help("Next Track")
                     .disabled(player.state == .stopped)
                 Button { player.stop() } label: { Image(systemName: "stop.fill").toolbarIcon() }
