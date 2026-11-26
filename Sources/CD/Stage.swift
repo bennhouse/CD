@@ -19,7 +19,14 @@ enum Metrics {
 @MainActor
 final class WindowSizer: ObservableObject {
     static let shared = WindowSizer()
-    weak var window: NSWindow?
+    weak var window: NSWindow? {
+        didSet {
+            guard let window, window !== oldValue else { return }
+            NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: window, queue: .main) { _ in
+                MainActor.assumeIsolated { WindowSizer.shared.collapseForSave() }
+            }
+        }
+    }
     /// Width the disc column holds while the window frame animates.
     @Published private(set) var frozenColumn: CGFloat?
     /// The queue takes part in the layout (it may still be fading in or out).
@@ -75,6 +82,20 @@ final class WindowSizer: ObservableObject {
                 withAnimation(.smooth(duration: Self.duration)) { queueShown = false }
             }
         }
+    }
+
+    /// Quitting or closing with the queue open: give back its width first, so the saved frame is the
+    /// window without the queue (otherwise every session would open 340 pt wider).
+    func collapseForSave() {
+        guard queueShown, let w = window, !w.styleMask.contains(.fullScreen) else { return }
+        var f = w.frame
+        f.size.width = max(Metrics.minColumn, f.width - Metrics.queueWidth)
+        generation += 1
+        queueShown = false
+        queueOpacity = 0
+        frozenColumn = nil
+        w.setFrame(f, display: false)
+        w.saveFrame(usingName: w.frameAutosaveName)
     }
 
     private func animate(_ w: NSWindow, to f: NSRect, done: @escaping @MainActor () -> Void) {
@@ -245,9 +266,9 @@ struct DiscStage: View {
         .onAppear { card = AlbumCard.from(player) }
         .onChange(of: player.albumToken) { _, _ in swap(to: AlbumCard.from(player)) }
         .onReceive(NotificationCenter.default.publisher(for: .cdDebugHover)) { n in
-            withAnimation(.smooth(duration: 0.28)) { hover = (n.object as? Bool ?? false) && player.state == .stopped }
+            withAnimation(.smooth(duration: 0.28)) { hover = (n.object as? Bool ?? false) && player.state != .playing }
         }
-        .onChange(of: player.state) { _, s in if s != .stopped, hover { withAnimation(.smooth(duration: 0.25)) { hover = false } } }
+        .onChange(of: player.state) { _, s in if s == .playing, hover { withAnimation(.smooth(duration: 0.25)) { hover = false } } }
     }
 
     private func swap(to new: AlbumCard) {
@@ -274,7 +295,7 @@ struct DiscStage: View {
 
     @ViewBuilder
     private func disc(_ c: AlbumCard, side: CGFloat, current: Bool) -> some View {
-        let canChange = current && player.state == .stopped
+        let canChange = current && player.state != .playing
         ZStack {
             if let cover = c.cover {
                 DiscView(cover: cover, spinning: current && player.state == .playing)

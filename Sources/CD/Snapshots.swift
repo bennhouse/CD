@@ -119,14 +119,14 @@ extension Snapshots {
     static func startStats(_ path: String) {
         statsPath = path
         FileManager.default.createFile(atPath: path, contents: nil)
-        if ProcessInfo.processInfo.environment["CD_NOMEM"] == "1" { return }
         Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in
             MainActor.assumeIsolated {
+                let noMem = ProcessInfo.processInfo.environment["CD_NOMEM"] == "1"
                 var info = task_vm_info_data_t()
                 var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<integer_t>.size)
-                _ = withUnsafeMutablePointer(to: &info) {
+                if !noMem { _ = withUnsafeMutablePointer(to: &info) {
                     $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) { task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count) }
-                }
+                } }
                 var ru = rusage()
                 getrusage(RUSAGE_SELF, &ru)
                 let cpu = Double(ru.ru_utime.tv_sec + ru.ru_stime.tv_sec) + Double(ru.ru_utime.tv_usec + ru.ru_stime.tv_usec) / 1e6

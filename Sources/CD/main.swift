@@ -180,6 +180,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        MainActor.assumeIsolated { WindowSizer.shared.collapseForSave() }
+    }
 }
 
 if CommandLine.arguments.count > 1, CommandLine.arguments[1] == "--render" {

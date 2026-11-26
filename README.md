@@ -21,3 +21,9 @@ longer follows the track being heard.
 renders the album through the real engine offline (checked bit-identical to each file decoded on its
 own and concatenated). App hooks: `CD_OPEN`, `CD_MUTE=1`, `CD_ACTIONS="2:play,5:skip,…"`, `CD_STATS`,
 `CD_SNAPSHOT` (+ `CD_BURST=1`), `CD_FRAMELOG=1`, `CD_WATCHDOG=1` — see `Snapshots.swift`.
+
+## Known limits
+- An album that mixes sample rates gets a faint (−37 dB) resampler transient at the track where the
+  rate changes; no gap. Albums at one rate, at any device rate, are sample-exact.
+- AAC/MP3 junctions are exactly what the files contain (encoder delay/padding removed by Core Audio);
+  tracks encoded separately can carry their own small edge artefacts.
