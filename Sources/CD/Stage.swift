@@ -231,6 +231,8 @@ struct DiscStage: View {
     @State private var arrive: CGFloat = 1
     @State private var leave: CGFloat = 0
     @State private var hover = false
+    /// The album whose CD is rising in (its disc runs the entrance once).
+    @State private var entering: UUID?
 
     var body: some View {
         GeometryReader { geo in
@@ -244,9 +246,16 @@ struct DiscStage: View {
                 // Keyed by album, so the disc that leaves is the very view that was on screen (same angle).
                 ForEach([leaving, card].compactMap { $0 }) { c in
                     let isCurrent = c.id == card.id
+                    // A CD with a cover moves in Core Animation (its own layers); SwiftUI moves the rest.
+                    let layered = c.cover != nil
+                    let exitDistance = geo.size.width / 2 + side / 2 + 30
                     VStack(spacing: Metrics.spacing) {
-                        disc(c, side: side, current: isCurrent)
-                            .offset(y: isCurrent ? (1 - arrive) * travel : 0)
+                        disc(c, side: side, current: isCurrent,
+                             enterFrom: isCurrent && entering == c.id ? travel : nil,
+                             exitBy: isCurrent ? nil : exitDistance)
+                            .offset(y: isCurrent && !layered ? (1 - arrive) * travel : 0)
+                            .offset(x: !isCurrent && !layered ? -leave * exitDistance : 0)
+                            .opacity(!isCurrent && !layered ? 1 - Double(leave) * 0.4 : 1)
                         info(c)
                             .frame(width: max(side + 60, 300), height: Metrics.infoHeight, alignment: .top)
                             // The new title is uncovered from the disc's lower edge down as the disc rises past it.
@@ -255,9 +264,9 @@ struct DiscStage: View {
                                     .frame(height: Metrics.infoHeight + travel + 40)
                                     .offset(y: isCurrent ? -Metrics.spacing + (1 - arrive) * travel : -Metrics.spacing)
                             }
+                            .offset(x: isCurrent ? 0 : -leave * exitDistance)
+                            .opacity(isCurrent ? 1 : 1 - Double(leave) * 0.4)
                     }
-                    .offset(x: isCurrent ? 0 : -leave * (geo.size.width / 2 + side / 2 + 30))
-                    .opacity(isCurrent ? 1 : 1 - Double(leave) * 0.4)
                     .zIndex(isCurrent ? 1 : 0)
                 }
                 // Hover and click on the disc's place, whatever is in it.
@@ -291,13 +300,14 @@ struct DiscStage: View {
             card = new
             arrive = 0
             hover = false
+            entering = new.id
         }
         let old = leaving?.id
         // Next frame, from those starting values: the old disc speeds away, the new one comes in fast
         // and lands softly.
         DispatchQueue.main.async {
-            withAnimation(.timingCurve(0.45, 0, 0.85, 0.35, duration: 0.3)) { leave = 1 }
-            withAnimation(.timingCurve(0.12, 0.72, 0.22, 1, duration: 0.62).delay(0.08)) { arrive = 1 }
+            withAnimation(Swap.animation(Swap.exitCurve, Swap.exitDuration)) { leave = 1 }
+            withAnimation(Swap.animation(Swap.enterCurve, Swap.enterDuration).delay(Swap.enterDelay)) { arrive = 1 }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { if leaving?.id == old { leaving = nil } }
         }
     }
@@ -305,11 +315,12 @@ struct DiscStage: View {
     /// A CD: the cover on a disc, lifted while hovered.
     /// The empty card has no CD: only the housing shows.
     @ViewBuilder
-    private func disc(_ c: AlbumCard, side: CGFloat, current: Bool) -> some View {
+    private func disc(_ c: AlbumCard, side: CGFloat, current: Bool, enterFrom: CGFloat?, exitBy: CGFloat?) -> some View {
         // Shadow and lift only while hovered: never at rest, never on a CD that is leaving.
         let lifted = current && hover
         if let cover = c.cover {
-            DiscView(cover: cover, spinning: current && player.state == .playing, lifted: lifted, animateLift: current)
+            DiscView(cover: cover, spinning: current && player.state == .playing, lifted: lifted, animateLift: current,
+                     enterFrom: enterFrom, exitBy: exitBy)
                 .frame(width: side, height: side)
                 .allowsHitTesting(false)
         } else if !c.isEmpty {
@@ -356,8 +367,11 @@ struct Housing: View {
             Label("Open Album", systemImage: "eject.fill")
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(.secondary)
+                // Comes into focus as it rises into place; leaves quicker, softening in place.
                 .opacity(prompt ? 1 : 0)
-                .offset(y: side * 0.24)
+                .blur(radius: prompt ? 0 : 5)
+                .offset(y: side * 0.24 + (prompt ? 0 : 7))
+                .animation(prompt ? .timingCurve(0.2, 0.8, 0.2, 1, duration: 0.38).delay(0.05) : .easeIn(duration: 0.16), value: prompt)
         }
         .frame(width: side, height: side)
     }

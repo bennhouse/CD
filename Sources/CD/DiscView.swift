@@ -15,6 +15,10 @@ struct DiscView: NSViewRepresentable {
     /// False for a CD that is leaving: it drops back at once, with no shadow.
     var animateLift = true
     var label = "Change CD"
+    /// Rise in from this far below (once, when the CD is put in).
+    var enterFrom: CGFloat?
+    /// Slide out by this much to the left (once, when the CD is taken out).
+    var exitBy: CGFloat?
 
     func makeNSView(context: Context) -> DiscNSView { DiscNSView() }
 
@@ -22,6 +26,25 @@ struct DiscView: NSViewRepresentable {
         v.setCover(cover)
         v.setSpinning(spinning)
         v.setLifted(lifted, label: label, animated: animateLift)
+        if let d = enterFrom { v.enter(from: d) }
+        if let d = exitBy { v.exit(by: d) }
+    }
+}
+
+/// The timing of a CD change, shared by the disc (Core Animation) and the title (SwiftUI), so the
+/// title is uncovered exactly as the disc's edge passes.
+enum Swap {
+    static let exitDuration = 0.3
+    static let exitCurve: (Float, Float, Float, Float) = (0.45, 0, 0.85, 0.35)
+    static let enterDelay = 0.08
+    static let enterDuration = 0.62
+    static let enterCurve: (Float, Float, Float, Float) = (0.12, 0.72, 0.22, 1)
+
+    static func timing(_ c: (Float, Float, Float, Float)) -> CAMediaTimingFunction {
+        CAMediaTimingFunction(controlPoints: c.0, c.1, c.2, c.3)
+    }
+    static func animation(_ c: (Float, Float, Float, Float), _ duration: Double) -> Animation {
+        .timingCurve(Double(c.0), Double(c.1), Double(c.2), Double(c.3), duration: duration)
     }
 }
 
@@ -61,11 +84,53 @@ final class DiscNSView: NSView {
     private var v0 = 0.0, v1 = 0.0, t0 = 0.0, d = 0.0
     private var spinning = false
 
+    private var entered = false
+    private var exited = false
+
+    /// The CD rises from `distance` points below its place: moved by the render server, so it stays
+    /// smooth however busy the app is while the new album appears.
+    func enter(from distance: CGFloat) {
+        guard !entered, let root = layer else { return }
+        entered = true
+        let a = CABasicAnimation(keyPath: "sublayerTransform")
+        a.fromValue = NSValue(caTransform3D: CATransform3DMakeTranslation(0, -distance, 0))
+        a.toValue = NSValue(caTransform3D: CATransform3DIdentity)
+        a.duration = Swap.enterDuration
+        a.timingFunction = Swap.timing(Swap.enterCurve)
+        a.beginTime = root.convertTime(CACurrentMediaTime(), from: nil) + Swap.enterDelay
+        a.fillMode = .backwards
+        root.add(a, forKey: "enter")
+    }
+
+    /// The CD slides out to the left, speeding up, and fades a little.
+    func exit(by distance: CGFloat) {
+        guard !exited, let root = layer else { return }
+        exited = true
+        let from = root.presentation()?.sublayerTransform ?? root.sublayerTransform
+        let to = CATransform3DMakeTranslation(-distance, 0, 0)
+        root.removeAnimation(forKey: "enter")
+        let move = CABasicAnimation(keyPath: "sublayerTransform")
+        move.fromValue = NSValue(caTransform3D: from)
+        move.toValue = NSValue(caTransform3D: to)
+        let fade = CABasicAnimation(keyPath: "opacity")
+        fade.fromValue = 1
+        fade.toValue = 0.6
+        let g = CAAnimationGroup()
+        g.animations = [move, fade]
+        g.duration = Swap.exitDuration
+        g.timingFunction = Swap.timing(Swap.exitCurve)
+        g.fillMode = .forwards
+        g.isRemovedOnCompletion = false
+        root.add(g, forKey: "exit")
+    }
+
     override init(frame: NSRect) {
         super.init(frame: frame)
         wantsLayer = true
         layer = CALayer()
         layer?.masksToBounds = false
+        // For the label's blur.
+        layerUsesCoreImageFilters = true
         layer?.addSublayer(stack)
         for l in [shadowLayer, disc, labelLayer] { stack.addSublayer(l) }
         disc.contentsGravity = .resizeAspect
@@ -76,6 +141,11 @@ final class DiscNSView: NSView {
         shadowLayer.shadowOffset = CGSize(width: 0, height: -9)
         shadowLayer.opacity = 0
         labelLayer.opacity = 0
+        if let blur = CIFilter(name: "CIGaussianBlur") {
+            blur.name = "blur"
+            blur.setValue(6, forKey: kCIInputRadiusKey)
+            labelLayer.filters = [blur]
+        }
         labelLayer.contentsGravity = .center
     }
 
@@ -100,8 +170,8 @@ final class DiscNSView: NSView {
         CATransaction.setAnimationDuration(dur)
         CATransaction.setAnimationTimingFunction(timing)
         shadowLayer.opacity = on ? 1 : 0
-        labelLayer.opacity = on ? 1 : 0
         CATransaction.commit()
+        animateLabel(on)
         let from = stack.presentation()?.transform ?? stack.transform
         let to = on ? CATransform3DMakeScale(Self.liftScale, Self.liftScale, 1) : CATransform3DIdentity
         let anim = CABasicAnimation(keyPath: "transform")
@@ -114,6 +184,37 @@ final class DiscNSView: NSView {
         stack.transform = to
         CATransaction.commit()
         stack.add(anim, forKey: "lift")
+    }
+
+    /// The label comes in just after the disc starts to lift: it rises a few points and comes into
+    /// focus as it fades in. It leaves quicker, softening and fading in place.
+    private func animateLabel(_ on: Bool) {
+        let p = labelLayer.presentation()
+        let opacity = CABasicAnimation(keyPath: "opacity")
+        opacity.fromValue = p?.opacity ?? labelLayer.opacity
+        opacity.toValue = on ? 1 : 0
+        let blur = CABasicAnimation(keyPath: "filters.blur.inputRadius")
+        blur.fromValue = (p?.value(forKeyPath: "filters.blur.inputRadius") as? NSNumber) ?? (on ? 6 : 0)
+        blur.toValue = on ? 0 : 4
+        let g = CAAnimationGroup()
+        var anims: [CAAnimation] = [opacity, blur]
+        if on {
+            let rise = CABasicAnimation(keyPath: "transform.translation.y")
+            rise.fromValue = -7
+            rise.toValue = 0
+            anims.append(rise)
+            g.beginTime = labelLayer.convertTime(CACurrentMediaTime(), from: nil) + 0.07
+            g.fillMode = .backwards
+        }
+        g.animations = anims
+        g.duration = on ? 0.38 : 0.16
+        g.timingFunction = on ? CAMediaTimingFunction(controlPoints: 0.2, 0.8, 0.2, 1) : CAMediaTimingFunction(name: .easeIn)
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        labelLayer.opacity = on ? 1 : 0
+        labelLayer.setValue(on ? 0 : 4, forKeyPath: "filters.blur.inputRadius")
+        CATransaction.commit()
+        labelLayer.add(g, forKey: "label")
     }
 
     private func renderLabel() {
