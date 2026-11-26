@@ -8,12 +8,18 @@ import SwiftUI
 // edge simply uncovers (or covers) the queue. Only when the window can't grow (full screen, or no
 // room on the screen) does the column make room instead, with a SwiftUI animation.
 
+/// Sizes of the interface, 30% smaller than CD 1.0 (texts and buttons keep their size).
 enum Metrics {
-    static let queueWidth: CGFloat = 340
-    static let minColumn: CGFloat = 360
-    static let minHeight: CGFloat = 430
+    static let queueWidth: CGFloat = 240
+    /// The title bar needs this much for the volume and the four transport buttons.
+    static let minColumn: CGFloat = 330
+    static let minHeight: CGFloat = 330
     static let infoHeight: CGFloat = 86
-    static let spacing: CGFloat = 24
+    static let spacing: CGFloat = 17
+    static let discMax: CGFloat = 294
+    static let discMin: CGFloat = 120
+    /// How far around the disc's square the pointer still counts as hovering it.
+    static let hoverMargin: CGFloat = 48
 }
 
 @MainActor
@@ -157,6 +163,8 @@ struct ContentView: View {
             return true
         }
         .onChange(of: player.queueVisible) { _, v in sizer.setQueue(v) }
+        // The accent colour follows the CD.
+        .tint(player.accent?.color ?? Color.accentColor)
         .toolbar {
             ToolbarItem(placement: .automatic) {
                 VolumeSlider()
@@ -236,13 +244,13 @@ struct DiscStage: View {
 
     var body: some View {
         GeometryReader { geo in
-            let side = max(170, min(420, min(geo.size.width - 80, geo.size.height - Metrics.infoHeight - Metrics.spacing - 64)))
-            let top = max(20, (geo.size.height - side - Metrics.spacing - Metrics.infoHeight) / 2)
+            let side = max(Metrics.discMin, min(Metrics.discMax, min(geo.size.width - 56, geo.size.height - Metrics.infoHeight - Metrics.spacing - 45)))
+            let top = max(14, (geo.size.height - side - Metrics.spacing - Metrics.infoHeight) / 2)
             // From its place to just below the bottom of the window.
             let travel = geo.size.height - top + 12
             ZStack(alignment: .top) {
                 // The housing: the empty, frosted disc the CDs go into. It never moves, lifts or casts a shadow.
-                Housing(side: side, prompt: card.isEmpty && hover)
+                Housing(side: side)
                 // Keyed by album, so the disc that leaves is the very view that was on screen (same angle).
                 ForEach([leaving, card].compactMap { $0 }) { c in
                     let isCurrent = c.id == card.id
@@ -269,15 +277,32 @@ struct DiscStage: View {
                     }
                     .zIndex(isCurrent ? 1 : 0)
                 }
-                // Hover and click on the disc's place, whatever is in it.
+                // Hover anywhere around the disc (its square plus a wide margin), whatever is in it: the CD
+                // lifts and the corner buttons appear. No tooltips here. A click on the empty housing opens a
+                // folder too.
                 let canChange = player.state != .playing
-                Color.clear
-                    .frame(width: side, height: side)
-                    .contentShape(DiscShape(), eoFill: true)
-                    .onHover { h in withAnimation(.timingCurve(0.3, 0, 0.2, 1, duration: 0.3)) { hover = h && canChange } }
-                    .onTapGesture { if canChange { Actions.open() } }
-                    .help(canChange ? (card.isEmpty ? "Open Album…" : "Change CD…") : "")
-                    .zIndex(2)
+                let margin = Metrics.hoverMargin
+                ZStack(alignment: .center) {
+                    Color.clear
+                        .frame(width: side, height: side)
+                        .contentShape(DiscShape(), eoFill: true)
+                        .onTapGesture { if canChange && card.isEmpty { Actions.open() } }
+                        .overlay(alignment: .topLeading) {
+                            CornerButton(symbol: card.isEmpty ? "folder" : "arrow.triangle.2.circlepath", shown: hover, delay: 0) {
+                                Actions.open()
+                            }
+                        }
+                        .overlay(alignment: .topTrailing) {
+                            if !card.isEmpty {
+                                CornerButton(symbol: "xmark", shown: hover, delay: 0.04) { player.eject() }
+                            }
+                        }
+                }
+                .frame(width: side + 2 * margin, height: side + 2 * margin)
+                .contentShape(Rectangle())
+                .onHover { h in withAnimation(.timingCurve(0.3, 0, 0.2, 1, duration: 0.3)) { hover = h && canChange } }
+                .padding(.top, -margin)
+                .zIndex(2)
             }
             .frame(width: geo.size.width, height: geo.size.height, alignment: .top)
             .padding(.top, top)
@@ -320,14 +345,14 @@ struct DiscStage: View {
         let lifted = current && hover
         if let cover = c.cover {
             DiscView(cover: cover, spinning: current && player.state == .playing, lifted: lifted, animateLift: current,
-                     enterFrom: enterFrom, exitBy: exitBy)
+                     label: "", enterFrom: enterFrom, exitBy: exitBy)
                 .frame(width: side, height: side)
                 .allowsHitTesting(false)
         } else if !c.isEmpty {
             // An album without a cover: a plain light disc, which lifts like the others.
             DiscShape().fill(Color(nsColor: .controlBackgroundColor), style: FillStyle(eoFill: true))
                 .overlay(DiscShape().stroke(Color.primary.opacity(0.1), lineWidth: 1))
-                .shadow(color: .black.opacity(lifted ? 0.32 : 0), radius: 18, y: 9)
+                .shadow(color: .black.opacity(lifted ? 0.32 : 0), radius: 13, y: 6)
                 .scaleEffect(lifted ? DiscNSView.liftScale : 1)
                 .transaction { if !current { $0.animation = nil } }
                 .frame(width: side, height: side)
@@ -354,25 +379,48 @@ struct DiscStage: View {
 }
 
 
-/// Where the CD goes: a frosted, recessed disc. On hover with no CD in, it offers to open one.
+/// Where the CD goes: a frosted, recessed disc. It never moves, lifts or casts a shadow.
 struct Housing: View {
     let side: CGFloat
-    let prompt: Bool
 
     var body: some View {
         ZStack {
             DiscShape().fill(.regularMaterial, style: FillStyle(eoFill: true))
             // A faint inner edge: a hollow, not a raised disc.
             DiscShape().stroke(Color.primary.opacity(0.10), lineWidth: 1)
-            Label("Open Album", systemImage: "eject.fill")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(.secondary)
-                // Comes into focus as it rises into place; leaves quicker, softening in place.
-                .opacity(prompt ? 1 : 0)
-                .blur(radius: prompt ? 0 : 5)
-                .offset(y: side * 0.24 + (prompt ? 0 : 7))
-                .animation(prompt ? .timingCurve(0.2, 0.8, 0.2, 1, duration: 0.38).delay(0.05) : .easeIn(duration: 0.16), value: prompt)
         }
         .frame(width: side, height: side)
+    }
+}
+
+/// A round button in a corner of the disc's square. It comes in rising a little and coming into focus,
+/// and leaves quicker, softening in place.
+struct CornerButton: View {
+    let symbol: String
+    let shown: Bool
+    let delay: Double
+    let action: () -> Void
+    @State private var pressedHover = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 12, weight: .semibold))
+                .frame(width: 28, height: 28)
+                .background(Circle().fill(.regularMaterial))
+                .overlay(Circle().strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.5))
+                .shadow(color: .black.opacity(0.12), radius: 3, y: 1)
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(pressedHover ? AnyShapeStyle(.tint) : AnyShapeStyle(.primary))
+        .scaleEffect(pressedHover ? 1.06 : 1)
+        .onHover { h in withAnimation(.easeOut(duration: 0.15)) { pressedHover = h } }
+        .opacity(shown ? 1 : 0)
+        .blur(radius: shown ? 0 : 4)
+        .offset(y: shown ? 0 : 5)
+        .animation(shown ? .timingCurve(0.2, 0.8, 0.2, 1, duration: 0.36).delay(0.06 + delay) : .easeIn(duration: 0.14), value: shown)
+        .allowsHitTesting(shown)
+        .padding(2)
     }
 }

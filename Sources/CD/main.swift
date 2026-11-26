@@ -10,7 +10,7 @@ struct CDApp: App {
         Window("CD", id: "main") {
             ContentView()
         }
-        .defaultSize(width: 560, height: 620)
+        .defaultSize(width: 420, height: 470)
         .windowToolbarStyle(.unified(showsTitle: false))
         .commands {
             CommandGroup(replacing: .newItem) {
@@ -68,10 +68,10 @@ struct QueuePanel: View {
                 if let id = ids.first { player.jump(to: id) }
             }
         }
-        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(.quaternary.opacity(0.5)))
-        .padding(.vertical, 16)
-        .padding(.trailing, 16)
-        .padding(.leading, 4)
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(.quaternary.opacity(0.5)))
+        .padding(.vertical, 11)
+        .padding(.trailing, 11)
+        .padding(.leading, 3)
     }
 }
 
@@ -95,14 +95,16 @@ struct QueueRow: View {
         HStack(spacing: 10) {
             ZStack {
                 if current {
+                    // Fixed width, so the icon sits on the same centre as the numbers.
                     Image(systemName: playing ? "speaker.wave.2.fill" : "speaker.fill")
                         .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(Color.accentColor)
+                        .frame(width: 16)
+                        .foregroundStyle(.tint)
                 } else {
                     Text("\(track.number ?? index)").monospacedDigit().tone(.tertiary)
                 }
             }
-            .frame(width: 24, alignment: .trailing)
+            .frame(width: 24, alignment: .center)
             Text(track.title).fontWeight(current ? .semibold : .regular).tone(failed ? .tertiary : .primary).lineLimit(1)
             Spacer(minLength: 6)
             Text(failed ? "Can't play" : Format.time(track.duration)).monospacedDigit().font(.callout).tone(.secondary)
@@ -186,6 +188,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
+if CommandLine.arguments.count > 1, CommandLine.arguments[1] == "--accent" {
+    // CD --accent IMAGE|AUDIO|FOLDER...: the accent colour of each cover and its contrast.
+    for a in CommandLine.arguments.dropFirst(2) {
+        let u = URL(fileURLWithPath: a)
+        var img: CGImage?
+        if let d = try? Data(contentsOf: u), let i = Library.downscale(d, 900) { img = i }
+        if img == nil { img = Library.cover(for: Library.audioFiles(in: [u]).compactMap(Library.read)) }
+        func hex(_ c: NSColor) -> String { String(format: "#%02X%02X%02X", Int(c.redComponent * 255), Int(c.greenComponent * 255), Int(c.blueComponent * 255)) }
+        if let acc = Accent.from(img) {
+            let l = RGB(Double(acc.light.redComponent), Double(acc.light.greenComponent), Double(acc.light.blueComponent))
+            let d = RGB(Double(acc.dark.redComponent), Double(acc.dark.greenComponent), Double(acc.dark.blueComponent))
+            print(String(format: "%@  light %@ (%.2f:1)  dark %@ (%.2f:1)", u.lastPathComponent, hex(acc.light), l.contrast(with: Accent.lightBackground),
+                         hex(acc.dark), d.contrast(with: Accent.darkBackground)))
+        } else {
+            print("\(u.lastPathComponent)  system accent (\(img == nil ? "no cover" : "no colour"))")
+        }
+    }
+    exit(0)
+}
 if CommandLine.arguments.count > 1, CommandLine.arguments[1] == "--render" {
     exit(MainActor.assumeIsolated { CLI.render(Array(CommandLine.arguments.dropFirst(2))) })
 } else {

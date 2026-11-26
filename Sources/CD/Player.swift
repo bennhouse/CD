@@ -36,6 +36,8 @@ final class Player: ObservableObject {
     /// 0…1 from the title bar slider; 1 is the standard level (no gain). The slider follows a
     /// squared curve so the lower half is usable.
     @Published var volume: Double = 1 { didSet { applyVolume() } }
+    /// Accent colour taken from the cover (nil: the system's).
+    @Published private(set) var accent: Accent?
 
     private func applyVolume() {
         engine?.engine.mainMixerNode.outputVolume = muted ? 0 : Float(volume * volume)
@@ -90,10 +92,12 @@ final class Player: ObservableObject {
             let sorted = tracks
             // The cover comes with the tracks, so the new disc arrives already printed.
             let cover = Library.cover(for: sorted)
+            let accent = Accent.from(cover)
             await MainActor.run {
                 guard self.loadToken == token else { return }
                 guard !sorted.isEmpty else { self.loading = false; NSSound.beep(); return }   // no music there: keep the disc
                 self.cover = cover
+                withAnimation(.easeInOut(duration: 0.6)) { self.accent = accent }
                 self.setTracks(sorted)
                 self.userReordered = false
                 self.failed = []
@@ -146,6 +150,21 @@ final class Player: ObservableObject {
             guard let first = tracks.first(where: { !failed.contains($0.id) }) else { return }
             start(at: first.id)
         }
+    }
+
+    /// Takes the CD out: playback stops and the housing is empty again.
+    func eject() {
+        stop()
+        loadToken = UUID()
+        loading = false
+        tracks = []
+        cover = nil
+        failed = []
+        userReordered = false
+        engine?.setQueue([])
+        withAnimation(.easeInOut(duration: 0.6)) { accent = nil }
+        albumToken = UUID()
+        updateNowPlaying()
     }
 
     func pause() {

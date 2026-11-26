@@ -13,6 +13,7 @@ enum Snapshots {
     static func startIfRequested() {
         let env = ProcessInfo.processInfo.environment
         if let script = env["CD_ACTIONS"] { runActions(script) }
+        if let a = env["CD_APPEARANCE"] { NSApp.appearance = NSAppearance(named: a == "dark" ? .darkAqua : .aqua) }
         if let path = env["CD_STATS"] { startStats(path) }
         if env["CD_WATCHDOG"] == "1" { Watchdog.start() }
         // Tests run with the window behind others; App Nap would then throttle the app like any background one.
@@ -58,6 +59,7 @@ extension Snapshots {
                     case "play": p.play()
                     case "pause": p.pause()
                     case "stop": p.stop()
+                    case "eject": p.eject()
                     case "skip": p.skip()
                     case "previous": p.previous()
                     case "move":

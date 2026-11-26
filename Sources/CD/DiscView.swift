@@ -137,8 +137,8 @@ final class DiscNSView: NSView {
         // At rest the disc lies flat in its housing: no shadow. Lifted, a soft shadow below it.
         shadowLayer.shadowColor = NSColor.black.cgColor
         shadowLayer.shadowOpacity = 0.32
-        shadowLayer.shadowRadius = 18
-        shadowLayer.shadowOffset = CGSize(width: 0, height: -9)
+        shadowLayer.shadowRadius = 13
+        shadowLayer.shadowOffset = CGSize(width: 0, height: -6)
         shadowLayer.opacity = 0
         labelLayer.opacity = 0
         if let blur = CIFilter(name: "CIGaussianBlur") {
@@ -151,7 +151,7 @@ final class DiscNSView: NSView {
 
     /// Lifts the disc (shadow fades in, slightly larger, label shown) or lays it back down.
     func setLifted(_ on: Bool, label: String, animated: Bool = true) {
-        if label != labelText { labelText = label; renderLabel() }
+        if label != labelText { labelText = label; if !label.isEmpty { renderLabel() } }
         guard on != lifted else { return }
         lifted = on
         if !animated {
@@ -171,7 +171,7 @@ final class DiscNSView: NSView {
         CATransaction.setAnimationTimingFunction(timing)
         shadowLayer.opacity = on ? 1 : 0
         CATransaction.commit()
-        animateLabel(on)
+        if !labelText.isEmpty { animateLabel(on) }
         let from = stack.presentation()?.transform ?? stack.transform
         let to = on ? CATransform3DMakeScale(Self.liftScale, Self.liftScale, 1) : CATransform3DIdentity
         let anim = CABasicAnimation(keyPath: "transform")

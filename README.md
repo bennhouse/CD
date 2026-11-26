@@ -9,7 +9,8 @@ CD plays an album the way a CD player does: you drop in a folder, the cover appe
 1. **Put a CD in.** Drop a folder of music on the window or the Dock icon, click the disc, use ⌘O, or *Open With › CD* in Finder. Folders are searched inside too (multi-disc albums). FLAC, WAV, AIFF, ALAC and AAC (M4A), MP3, CAF and the other formats macOS can read.
 2. **Order.** Tracks are sorted by disc and track number from their tags (by file name when there are none). The cover comes from the files, or from an image in the folder (`cover.jpg`, `folder.jpg`…). Below the disc: album, artist, year, number of tracks, length and format.
 3. **Play.** The disc spins up and keeps turning while the music plays; the queue opens on the right and the window widens to make room. Double-click a track to play it, drag tracks to reorder them.
-4. **Change CD.** Hover the still CD: it lifts off the window (a shadow fades in, it grows slightly) and offers to change it; click to open another folder. The old CD slides out to the left over its housing, the frosted disc that stays in place, and the new one rises from below.
+4. **Change CD.** Move the pointer near the still CD: it lifts off the window (a shadow fades in, it grows slightly) and two buttons appear in the corners of its square: ⟳ opens another folder, × takes the CD out. With no CD in, a folder button opens one. The old CD slides out to the left over its housing, the frosted disc that stays in place, and the new one rises from below.
+5. **Colour.** The accent colour (volume slider, playing track, buttons) comes from the cover, adjusted to stay readable in light and dark mode.
 
 ### Controls
 
