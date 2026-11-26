@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- The volume slider works: dragging it no longer moves the window (it is an AppKit control now). The scroll wheel over it changes the volume too.
 - Previous and next track use the double-arrow symbols of Apple Music.
 - Below the disc: the album while the CD is still; once it plays, the track's title on the first line and the album before the artist on the second. Texts change in place, fading and blurring out and back into focus, without sliding.
 - Queue rows have no gaps: each track's hover area reaches the next track.
@@ -9,7 +10,7 @@
 - The ▶ on a hovered track is drawn over the number: the list no longer moves when it appears.
 - Muted covers (beige, slate, sepia, dark gradients) get a muted accent of their own colour; only grey, black or white covers keep the system accent.
 - Queue: hovering a track turns its number into a small ▶, the way to play another track (no selection, no double-click; rows are still dragged to reorder). The playing track's row is tinted in the accent colour.
-- The volume slider is drawn by CD, so its filled part follows the accent colour too (the system slider in a title bar ignored it).
+- The volume slider is drawn by CD, so its filled part follows the accent colour too.
 - Click the CD to play it, and again to pause.
 - The disc is 10% larger than in the first 30%-smaller layout.
 - The accent colour comes from the CD's cover (the slider, the playing track's icon, the corner buttons). It is adjusted separately for light and dark mode to keep at least 4.5:1 contrast and some colour (never near black or near white); covers without colour keep the system accent.

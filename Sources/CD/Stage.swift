@@ -215,44 +215,104 @@ struct ContentView: View {
     }
 }
 
-/// A plain volume slider: full (the standard level) to silent. Drawn by hand, because the system
-/// slider in a title bar ignores the accent colour: the filled part is in the CD's colour.
-struct VolumeSlider: View {
+/// A plain volume slider: full (the standard level) to silent, its filled part in the CD's colour.
+/// An AppKit view, because in a title bar a drag on a SwiftUI view moves the window instead.
+struct VolumeSlider: NSViewRepresentable {
     @ObservedObject private var player = Player.shared
-    @Environment(\.controlActiveState) private var active
-    @State private var dragging = false
-    private let width: CGFloat = 96
-    private let knob: CGFloat = 15
 
-    var body: some View {
-        let accent = player.accent?.color ?? Color.accentColor
-        let travel = width - knob
-        let x = CGFloat(player.volume) * travel
-        ZStack(alignment: .leading) {
-            Capsule().fill(Color.primary.opacity(0.14)).frame(height: 4)
-            Capsule().fill(active == .inactive ? Color.secondary.opacity(0.6) : accent)
-                .frame(width: x + knob / 2, height: 4)
-            Circle()
-                .fill(Color.white)
-                .overlay(Circle().strokeBorder(Color.black.opacity(0.12), lineWidth: 0.5))
-                .shadow(color: .black.opacity(dragging ? 0.3 : 0.2), radius: dragging ? 2.5 : 1.5, y: 0.5)
-                .frame(width: knob, height: knob)
-                .offset(x: x)
-        }
-        .frame(width: width, height: 22)
-        .contentShape(Rectangle())
-        .gesture(DragGesture(minimumDistance: 0).onChanged { g in
-            dragging = true
-            player.volume = Double(min(1, max(0, (g.location.x - knob / 2) / travel)))
-        }.onEnded { _ in dragging = false })
-        .padding(.horizontal, 6)
-        .accessibilityElement()
-        .accessibilityLabel("Volume")
-        .accessibilityValue("\(Int(player.volume * 100)) percent")
-        .accessibilityAdjustableAction { d in
-            player.volume = min(1, max(0, player.volume + (d == .increment ? 0.1 : -0.1)))
+    func makeNSView(context: Context) -> VolumeSliderView {
+        let v = VolumeSliderView()
+        v.onChange = { value in MainActor.assumeIsolated { Player.shared.volume = value } }
+        return v
+    }
+
+    func updateNSView(_ v: VolumeSliderView, context: Context) {
+        v.value = player.volume
+        if let accent = player.accent {
+            v.accent = NSColor(name: nil) { a in a.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? accent.dark : accent.light }
+        } else {
+            v.accent = .controlAccentColor
         }
     }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: VolumeSliderView, context: Context) -> CGSize? {
+        CGSize(width: VolumeSliderView.width + 12, height: 22)
+    }
+}
+
+final class VolumeSliderView: NSView {
+    static let width: CGFloat = 96
+    private let knob: CGFloat = 15
+    var onChange: ((Double) -> Void)?
+    var value: Double = 1 { didSet { if value != oldValue { needsDisplay = true } } }
+    var accent: NSColor = .controlAccentColor { didSet { needsDisplay = true } }
+    private var dragging = false
+
+    override var mouseDownCanMoveWindow: Bool { false }
+    override var intrinsicContentSize: NSSize { NSSize(width: Self.width + 12, height: 22) }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    private var track: NSRect {
+        NSRect(x: (bounds.width - Self.width) / 2, y: 0, width: Self.width, height: bounds.height)
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let t = track
+        let travel = t.width - knob
+        let x = t.minX + CGFloat(value) * travel
+        let midY = bounds.midY
+        let active = window?.isKeyWindow ?? true
+        NSColor.labelColor.withAlphaComponent(0.14).setFill()
+        NSBezierPath(roundedRect: NSRect(x: t.minX, y: midY - 2, width: t.width, height: 4), xRadius: 2, yRadius: 2).fill()
+        (active ? accent : NSColor.secondaryLabelColor.withAlphaComponent(0.6)).setFill()
+        NSBezierPath(roundedRect: NSRect(x: t.minX, y: midY - 2, width: x - t.minX + knob / 2, height: 4), xRadius: 2, yRadius: 2).fill()
+        let k = NSRect(x: x, y: midY - knob / 2, width: knob, height: knob)
+        NSGraphicsContext.saveGraphicsState()
+        let sh = NSShadow()
+        sh.shadowColor = NSColor.black.withAlphaComponent(dragging ? 0.3 : 0.2)
+        sh.shadowBlurRadius = dragging ? 2.5 : 1.5
+        sh.shadowOffset = NSSize(width: 0, height: -0.5)
+        sh.set()
+        NSColor.white.setFill()
+        NSBezierPath(ovalIn: k).fill()
+        NSGraphicsContext.restoreGraphicsState()
+        NSColor.black.withAlphaComponent(0.12).setStroke()
+        let ring = NSBezierPath(ovalIn: k.insetBy(dx: 0.25, dy: 0.25))
+        ring.lineWidth = 0.5
+        ring.stroke()
+    }
+
+    private func set(from event: NSEvent) {
+        let p = convert(event.locationInWindow, from: nil)
+        let t = track
+        let v = Double(min(1, max(0, (p.x - t.minX - knob / 2) / (t.width - knob))))
+        value = v
+        onChange?(v)
+    }
+
+    override func mouseDown(with event: NSEvent) { dragging = true; set(from: event) }
+    override func mouseDragged(with event: NSEvent) { set(from: event) }
+    override func mouseUp(with event: NSEvent) { dragging = false; needsDisplay = true }
+    override func scrollWheel(with event: NSEvent) {
+        let d = event.hasPreciseScrollingDeltas ? event.scrollingDeltaY / 200 : event.scrollingDeltaY / 20
+        let v = min(1, max(0, value + Double(d)))
+        value = v
+        onChange?(v)
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        NotificationCenter.default.addObserver(self, selector: #selector(redraw), name: NSWindow.didBecomeKeyNotification, object: window)
+        NotificationCenter.default.addObserver(self, selector: #selector(redraw), name: NSWindow.didResignKeyNotification, object: window)
+    }
+    @objc private func redraw() { needsDisplay = true }
+
+    override func isAccessibilityElement() -> Bool { true }
+    override func accessibilityRole() -> NSAccessibility.Role? { .slider }
+    override func accessibilityLabel() -> String? { "Volume" }
+    override func accessibilityValue() -> Any? { NSNumber(value: value) }
+    override func accessibilityPerformIncrement() -> Bool { value = min(1, value + 0.1); onChange?(value); return true }
+    override func accessibilityPerformDecrement() -> Bool { value = max(0, value - 0.1); onChange?(value); return true }
 }
 
 /// What the stage shows for one album: its disc and the lines below it.
