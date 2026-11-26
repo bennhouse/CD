@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- The queue first takes the room the window already has; the window grows only by what is missing to reach about 430 pt of disc column plus the queue, and gives exactly that back when the queue goes. The queue is a little wider (270 pt).
+- The ▶ on a hovered track is drawn over the number: the list no longer moves when it appears.
+- Muted covers (beige, slate, sepia, dark gradients) get a muted accent of their own colour; only grey, black or white covers keep the system accent.
 - Queue: hovering a track turns its number into a small ▶, the way to play another track (no selection, no double-click; rows are still dragged to reorder). The playing track's row is tinted in the accent colour.
 - The volume slider is drawn by CD, so its filled part follows the accent colour too (the system slider in a title bar ignored it).
 - Click the CD to play it, and again to pause.

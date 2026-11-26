@@ -32,7 +32,8 @@ struct Accent: Equatable {
     static func from(_ image: CGImage?) -> Accent? {
         guard let image, let base = dominant(image) else { return nil }
         var hsl = base.hsl
-        hsl.s = min(hsl.s, 0.78)
+        // Not neon, and not so grey that it no longer reads as the cover's colour.
+        hsl.s = min(max(hsl.s, 0.32), 0.78)
         return Accent(light: fit(hsl, on: lightBackground, darker: true).ns,
                       dark: fit(hsl, on: darkBackground, darker: false).ns)
     }
@@ -68,9 +69,10 @@ struct Accent: Equatable {
             let c = RGB(Double(px[4 * i]) / 255, Double(px[4 * i + 1]) / 255, Double(px[4 * i + 2]) / 255)
             let h = c.hsl
             total += 1
-            // Vivid, mid-light pixels count most; greys, near-blacks and near-whites hardly.
-            let w = h.s * h.s * max(0, 1 - abs(h.l - 0.5) * 1.8)
-            guard w > 0.01 else { continue }
+            // Vivid, mid-light pixels count most; greys, near-blacks and near-whites little. A muted cover
+            // still has a colour: it counts too, just less.
+            let w = h.s * h.s * max(0.05, 1 - abs(h.l - 0.5) * 1.8)
+            guard h.s > 0.06, w > 0.0005 else { continue }
             let bin = min(23, Int(h.h * 24))
             weight[bin] += w
             sum[bin] = RGB(sum[bin].r + c.r * w, sum[bin].g + c.g * w, sum[bin].b + c.b * w)
@@ -81,8 +83,8 @@ struct Accent: Equatable {
             let w = weight[(b + 23) % 24] * 0.5 + weight[b] + weight[(b + 1) % 24] * 0.5
             if w > bestW { bestW = w; best = b }
         }
-        // Too little colour on the cover: keep the system accent.
-        guard bestW / total > 0.035, weight[best] > 0 else { return nil }
+        // Only a cover with practically no colour (greys, black, white) keeps the system accent.
+        guard bestW / total > 0.002, weight[best] > 0 else { return nil }
         let w = weight[best]
         return RGB(sum[best].r / w, sum[best].g / w, sum[best].b / w)
     }

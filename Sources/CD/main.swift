@@ -93,31 +93,36 @@ struct QueueRow: View {
     @State private var hover = false
 
     var body: some View {
+        let showPlay = hover && !failed && !(current && playing)
         HStack(spacing: 10) {
-            ZStack {
-                if hover && !failed && !(current && playing) {
+            // The number column keeps its size whatever it shows, so rows never move: the number, the
+            // speaker of the playing track and the hover ▶ are drawn on top of each other.
+            Text("\(track.number ?? index)")
+                .monospacedDigit()
+                .tone(.tertiary)
+                .opacity(current || showPlay ? 0 : 1)
+                .frame(width: 24, alignment: .center)
+                .overlay {
+                    Image(systemName: playing ? "speaker.wave.2.fill" : "speaker.fill")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.tint)
+                        .opacity(current && !showPlay ? 1 : 0)
+                }
+                .overlay {
                     // On hover the number becomes a small play button: the way to play another track.
                     Button(action: play) {
                         Image(systemName: "play.fill")
-                            .font(.system(size: 10, weight: .bold))
-                            .frame(width: 20, height: 20)
+                            .font(.system(size: 9, weight: .bold))
+                            .frame(width: 18, height: 18)
                             .background(Circle().fill(.tint.opacity(0.18)))
                             .contentShape(Circle())
                     }
                     .buttonStyle(.plain)
                     .foregroundStyle(.tint)
-                    .transition(.opacity.combined(with: .scale(scale: 0.7)))
-                } else if current {
-                    // Fixed width, so the icon sits on the same centre as the numbers.
-                    Image(systemName: playing ? "speaker.wave.2.fill" : "speaker.fill")
-                        .font(.system(size: 11, weight: .semibold))
-                        .frame(width: 16)
-                        .foregroundStyle(.tint)
-                } else {
-                    Text("\(track.number ?? index)").monospacedDigit().tone(.tertiary)
+                    .scaleEffect(showPlay ? 1 : 0.7)
+                    .opacity(showPlay ? 1 : 0)
+                    .allowsHitTesting(showPlay)
                 }
-            }
-            .frame(width: 24, alignment: .center)
             Text(track.title).fontWeight(current ? .semibold : .regular).tone(failed ? .tertiary : .primary).lineLimit(1)
             Spacer(minLength: 6)
             Text(failed ? "Can't play" : Format.time(track.duration)).monospacedDigit().font(.callout).tone(.secondary)

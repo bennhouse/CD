@@ -10,7 +10,9 @@ import SwiftUI
 
 /// Sizes of the interface, 30% smaller than CD 1.0 (texts and buttons keep their size).
 enum Metrics {
-    static let queueWidth: CGFloat = 240
+    static let queueWidth: CGFloat = 270
+    /// The disc column the window aims for while the queue is open (it grows only up to this).
+    static let preferredColumn: CGFloat = 430
     /// The title bar needs this much for the volume and the four transport buttons.
     static let minColumn: CGFloat = 330
     static let minHeight: CGFloat = 345
@@ -33,21 +35,28 @@ final class WindowSizer: ObservableObject {
             }
         }
     }
-    /// Width the disc column holds while the window frame animates.
-    @Published private(set) var frozenColumn: CGFloat?
+    /// The disc column's width while the queue comes or goes (animated); free otherwise.
+    @Published private(set) var column: CGFloat = 0
+    @Published private(set) var columnLocked = false
     /// The queue takes part in the layout (it may still be fading in or out).
     @Published private(set) var queueShown = false
     @Published private(set) var queueOpacity: Double = 0
+    /// How much the window grew to make room for the queue (given back when it goes).
+    private var expanded: CGFloat = 0
     private var generation = 0
 
-    /// Frame animation: quick start, long soft landing.
+    /// Quick start, long soft landing; the same curve for the window frame and the layout inside it.
     private static let duration = 0.46
     private static let curve = CAMediaTimingFunction(controlPoints: 0.32, 0.0, 0.12, 1)
+    private static var animation: Animation { .timingCurve(0.32, 0, 0.12, 1, duration: duration) }
 
-    var minWidth: CGFloat { Metrics.minColumn + (queueShown && frozenColumn == nil ? Metrics.queueWidth : 0) }
+    var minWidth: CGFloat { Metrics.minColumn + (queueShown && !columnLocked ? Metrics.queueWidth : 0) }
 
+    /// The queue opens beside the disc. It first takes the room the window already has; the window grows
+    /// only by what is missing to reach a comfortable size (disc column + queue), and gives exactly that
+    /// back when the queue goes.
     func setQueue(_ show: Bool) {
-        guard show != queueShown || frozenColumn != nil else { return }
+        guard show != queueShown || columnLocked else { return }
         generation += 1
         let gen = generation
         let q = Metrics.queueWidth
@@ -56,50 +65,64 @@ final class WindowSizer: ObservableObject {
             queueOpacity = show ? 1 : 0
             return
         }
-        let column = frozenColumn ?? (content.bounds.width - (queueShown ? q : 0))
+        let cw = content.bounds.width
+        let current = columnLocked ? column : cw - (queueShown ? q : 0)
+        Snapshots.log("setQueue(\(show)) cw=\(cw) frame=\(w.frame.width) expanded=\(expanded) locked=\(columnLocked) shown=\(queueShown)")
         var f = w.frame
         let screen = w.screen?.visibleFrame ?? f
         let canResize = !w.styleMask.contains(.fullScreen) && !w.isZoomed
-
+        // Start from where the column is now, without animation.
+        var t = Transaction()
+        t.disablesAnimations = true
+        withTransaction(t) {
+            column = current
+            columnLocked = true
+            if show { queueShown = true }
+        }
         if show {
-            queueShown = true
-            if canResize, f.width + q <= screen.width {
-                frozenColumn = column
-                f.size.width += q
+            var target = max(cw, Metrics.preferredColumn + q)
+            if !canResize { target = cw }
+            target = min(target, cw + max(0, screen.width - f.width))
+            let grow = max(0, target - cw)
+            expanded = grow
+            withAnimation(Self.animation) { column = max(Metrics.minColumn, target - q) }
+            withAnimation(.easeOut(duration: 0.32).delay(0.08)) { queueOpacity = 1 }
+            if grow > 0 {
+                f.size.width += grow
                 if f.maxX > screen.maxX { f.origin.x = max(screen.minX, screen.maxX - f.width) }
-                withAnimation(.easeOut(duration: 0.32).delay(0.1)) { queueOpacity = 1 }
-                animate(w, to: f) { if self.generation == gen { self.frozenColumn = nil } }
-            } else {
-                frozenColumn = nil
-                withAnimation(.smooth(duration: Self.duration)) { queueOpacity = 1 }
+                animate(w, to: f) {}
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + Self.duration + 0.02) {
+                if self.generation == gen { self.columnLocked = false }
             }
         } else {
+            let shrink = canResize ? min(expanded, max(0, cw - Metrics.minColumn)) : 0
+            expanded = 0
             withAnimation(.easeIn(duration: 0.18)) { queueOpacity = 0 }
-            if canResize, f.width - q >= Metrics.minColumn {
-                frozenColumn = column
-                f.size.width -= q
-                animate(w, to: f) {
-                    guard self.generation == gen else { return }
-                    self.queueShown = false
-                    self.frozenColumn = nil
-                }
-            } else {
-                frozenColumn = nil
-                withAnimation(.smooth(duration: Self.duration)) { queueShown = false }
+            withAnimation(Self.animation) { column = cw - shrink }
+            if shrink > 0 {
+                f.size.width -= shrink
+                animate(w, to: f) {}
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + Self.duration + 0.02) {
+                guard self.generation == gen else { return }
+                self.queueShown = false
+                self.columnLocked = false
             }
         }
     }
 
-    /// Quitting or closing with the queue open: give back its width first, so the saved frame is the
-    /// window without the queue (otherwise every session would open 340 pt wider).
+    /// Quitting or closing with the queue open: give back what the window grew for it first, so the saved
+    /// frame is the window without the queue.
     func collapseForSave() {
         guard queueShown, let w = window, !w.styleMask.contains(.fullScreen) else { return }
         var f = w.frame
-        f.size.width = max(Metrics.minColumn, f.width - Metrics.queueWidth)
+        f.size.width = max(Metrics.minColumn, f.width - expanded)
         generation += 1
+        expanded = 0
         queueShown = false
         queueOpacity = 0
-        frozenColumn = nil
+        columnLocked = false
         w.setFrame(f, display: false)
         w.saveFrame(usingName: w.frameAutosaveName)
     }
@@ -134,7 +157,7 @@ struct ContentView: View {
 
     var body: some View {
         GeometryReader { geo in
-            let col = sizer.frozenColumn ?? max(Metrics.minColumn, geo.size.width - (sizer.queueShown ? Metrics.queueWidth : 0))
+            let col = sizer.columnLocked ? sizer.column : max(Metrics.minColumn, geo.size.width - (sizer.queueShown ? Metrics.queueWidth : 0))
             ZStack(alignment: .topLeading) {
                 DiscStage()
                     .frame(width: col, height: geo.size.height)
