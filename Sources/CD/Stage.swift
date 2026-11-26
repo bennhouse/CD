@@ -192,15 +192,43 @@ struct ContentView: View {
     }
 }
 
-/// A plain volume slider: full (the standard level) to silent.
+/// A plain volume slider: full (the standard level) to silent. Drawn by hand, because the system
+/// slider in a title bar ignores the accent colour: the filled part is in the CD's colour.
 struct VolumeSlider: View {
     @ObservedObject private var player = Player.shared
+    @Environment(\.controlActiveState) private var active
+    @State private var dragging = false
+    private let width: CGFloat = 96
+    private let knob: CGFloat = 15
+
     var body: some View {
-        Slider(value: $player.volume, in: 0...1)
-            .controlSize(.small)
-            .frame(width: 96)
-            .help("Volume")
-            .padding(.horizontal, 6)
+        let accent = player.accent?.color ?? Color.accentColor
+        let travel = width - knob
+        let x = CGFloat(player.volume) * travel
+        ZStack(alignment: .leading) {
+            Capsule().fill(Color.primary.opacity(0.14)).frame(height: 4)
+            Capsule().fill(active == .inactive ? Color.secondary.opacity(0.6) : accent)
+                .frame(width: x + knob / 2, height: 4)
+            Circle()
+                .fill(Color.white)
+                .overlay(Circle().strokeBorder(Color.black.opacity(0.12), lineWidth: 0.5))
+                .shadow(color: .black.opacity(dragging ? 0.3 : 0.2), radius: dragging ? 2.5 : 1.5, y: 0.5)
+                .frame(width: knob, height: knob)
+                .offset(x: x)
+        }
+        .frame(width: width, height: 22)
+        .contentShape(Rectangle())
+        .gesture(DragGesture(minimumDistance: 0).onChanged { g in
+            dragging = true
+            player.volume = Double(min(1, max(0, (g.location.x - knob / 2) / travel)))
+        }.onEnded { _ in dragging = false })
+        .padding(.horizontal, 6)
+        .accessibilityElement()
+        .accessibilityLabel("Volume")
+        .accessibilityValue("\(Int(player.volume * 100)) percent")
+        .accessibilityAdjustableAction { d in
+            player.volume = min(1, max(0, player.volume + (d == .increment ? 0.1 : -0.1)))
+        }
     }
 }
 

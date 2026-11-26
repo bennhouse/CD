@@ -35,7 +35,6 @@ struct CDApp: App {
 /// The queue: double click a track to play it, drag to reorder.
 struct QueuePanel: View {
     @ObservedObject private var player = Player.shared
-    @State private var selection = Set<UUID>()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -48,25 +47,25 @@ struct QueuePanel: View {
             .padding(.top, 14)
             .padding(.bottom, 10)
             Divider().padding(.horizontal, 12)
-            List(selection: $selection) {
+            // No selection: a track is played with the ▶ that replaces its number on hover; rows are
+            // dragged to reorder. The playing track is marked in the accent colour.
+            List {
                 ForEach(player.tracks) { t in
+                    let current = t.id == player.currentID
                     QueueRow(track: t, index: (player.tracks.firstIndex(of: t) ?? 0) + 1,
-                             current: t.id == player.currentID, playing: player.state == .playing,
-                             failed: player.failed.contains(t.id))
-                        .tag(t.id)
+                             current: current, playing: player.state == .playing,
+                             failed: player.failed.contains(t.id)) { player.jump(to: t.id) }
                         .listRowSeparator(.hidden)
+                        .listRowBackground(
+                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                .fill(.tint.opacity(current ? 0.16 : 0))
+                                .padding(.horizontal, 6)
+                        )
                 }
                 .onMove { player.move(from: $0, to: $1) }
             }
             .listStyle(.plain)
             .scrollContentBackground(.hidden)
-            .contextMenu(forSelectionType: UUID.self) { ids in
-                if let id = ids.first {
-                    Button("Play") { player.jump(to: id) }
-                }
-            } primaryAction: { ids in
-                if let id = ids.first { player.jump(to: id) }
-            }
         }
         .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(.quaternary.opacity(0.5)))
         .padding(.vertical, 11)
@@ -90,11 +89,25 @@ struct QueueRow: View {
     let current: Bool
     let playing: Bool
     let failed: Bool
+    let play: () -> Void
+    @State private var hover = false
 
     var body: some View {
         HStack(spacing: 10) {
             ZStack {
-                if current {
+                if hover && !failed && !(current && playing) {
+                    // On hover the number becomes a small play button: the way to play another track.
+                    Button(action: play) {
+                        Image(systemName: "play.fill")
+                            .font(.system(size: 10, weight: .bold))
+                            .frame(width: 20, height: 20)
+                            .background(Circle().fill(.tint.opacity(0.18)))
+                            .contentShape(Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.tint)
+                    .transition(.opacity.combined(with: .scale(scale: 0.7)))
+                } else if current {
                     // Fixed width, so the icon sits on the same centre as the numbers.
                     Image(systemName: playing ? "speaker.wave.2.fill" : "speaker.fill")
                         .font(.system(size: 11, weight: .semibold))
@@ -111,6 +124,9 @@ struct QueueRow: View {
         }
         .padding(.vertical, 3)
         .contentShape(Rectangle())
+        .onHover { h in withAnimation(.easeOut(duration: 0.12)) { hover = h } }
+        // Test aid: CD_ROWHOVER=<n> shows row n as hovered.
+        .onAppear { if ProcessInfo.processInfo.environment["CD_ROWHOVER"].flatMap(Int.init) == index { hover = true } }
     }
 }
 
