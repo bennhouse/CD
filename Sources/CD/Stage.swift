@@ -158,10 +158,12 @@ struct ContentView: View {
         }
         .onChange(of: player.queueVisible) { _, v in sizer.setQueue(v) }
         .toolbar {
-            ToolbarItem(placement: .primaryAction) {
+            ToolbarItem(placement: .automatic) {
                 VolumeSlider()
             }
-            ToolbarItemGroup(placement: .primaryAction) {
+            // Flexible space: volume on the left, the transport on the right.
+            ToolbarItem(placement: .automatic) { Spacer() }
+            ToolbarItemGroup(placement: .automatic) {
                 Button { player.previous() } label: { Image(systemName: "backward.end.fill").toolbarIcon() }
                     .help("Previous Track")
                     .disabled(player.state == .stopped)
@@ -296,31 +298,37 @@ struct DiscStage: View {
     @ViewBuilder
     private func disc(_ c: AlbumCard, side: CGFloat, current: Bool) -> some View {
         let canChange = current && player.state != .playing
-        ZStack {
+        let isShaded = (current && hover) || (!current && shaded == c.id)
+        let label = c.isEmpty ? "Open Album" : "Change CD"
+        Group {
             if let cover = c.cover {
-                DiscView(cover: cover, spinning: current && player.state == .playing)
+                // Shade, label, shift and shadow are drawn by the disc view itself, in step with it.
+                DiscView(cover: cover, spinning: current && player.state == .playing, shaded: isShaded, label: label)
             } else {
-                DiscShape().fill(.regularMaterial, style: FillStyle(eoFill: true))
-                    .overlay(DiscShape().stroke(Color.primary.opacity(0.08), lineWidth: 1))
-            }
-            if (current && hover) || (!current && shaded == c.id) {
-                DiscShape().fill(Color.black.opacity(0.45), style: FillStyle(eoFill: true))
-                VStack(spacing: 6) {
-                    Image(systemName: "eject.fill").font(.system(size: 24, weight: .medium))
-                    Text(c.isEmpty ? "Open Album" : "Change CD").font(.headline)
+                // The empty disc is all SwiftUI, so one modifier moves all of it.
+                ZStack {
+                    DiscShape().fill(.regularMaterial, style: FillStyle(eoFill: true))
+                        .overlay(DiscShape().stroke(Color.primary.opacity(0.08), lineWidth: 1))
+                    DiscShape().fill(Color.black.opacity(isShaded ? 0.45 : 0), style: FillStyle(eoFill: true))
+                    VStack(spacing: 6) {
+                        Image(systemName: "eject.fill").font(.system(size: 24, weight: .medium))
+                        Text(label).font(.system(size: 13, weight: .semibold))
+                    }
+                    .foregroundStyle(.white)
+                    .opacity(isShaded ? 1 : 0)
+                    .offset(y: side * 0.21)
                 }
-                .foregroundStyle(.white)
-                .offset(y: side * 0.21)
+                .compositingGroup()
+                .shadow(color: .black.opacity(0.18), radius: 14, y: 6)
+                .offset(x: isShaded ? -DiscNSView.shift : 0)
             }
         }
         .frame(width: side, height: side)
-        .compositingGroup()
-        .shadow(color: .black.opacity(0.22), radius: 14, y: 6)
-        .offset(x: (current && hover) || (!current && shaded == c.id) ? -16 : 0)
         .contentShape(DiscShape(), eoFill: true)
         .onHover { h in
             guard current else { return }
-            withAnimation(.smooth(duration: 0.28)) { hover = h && canChange }
+            // The empty disc animates in SwiftUI; the cover disc animates its own layers.
+            withAnimation(.timingCurve(0.3, 0, 0.2, 1, duration: 0.28)) { hover = h && canChange }
         }
         .onTapGesture { if canChange { Actions.open() } }
         .help(canChange ? (c.isEmpty ? "Open Album…" : "Change CD…") : "")

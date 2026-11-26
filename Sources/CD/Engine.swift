@@ -9,11 +9,13 @@ import Synchronization
 // scheduled, so the last sample of a track is followed by the first sample of the next one in the
 // very same render cycle: no gap, no pop, no stall.
 //
-// - Memory: only the ring buffer (4 s of stereo Float32) and one decode chunk are in RAM. Files are
-//   streamed from disk by AVAudioFile (which also removes the encoder delay and padding of AAC/MP3, as
-//   given by the file's packet table / iTunSMPB / LAME header).
-// - Lookahead: ~15 s before a track ends the decoder opens the next file and asks the kernel to read
-//   its first megabytes (F_RDADVISE), so the switch never waits on the disk.
+// - Memory: only the ring buffer (~20 s of stereo Float32: 8 MB at 44.1 kHz, 16 MB at most) and one
+//   decode chunk are in RAM. Files are streamed from disk by AVAudioFile (which also removes the encoder
+//   delay and padding of AAC/MP3, as given by the file's packet table / iTunSMPB / LAME header).
+// - Slow disks: a read-ahead thread (ReadAhead.swift) fetches the raw bytes of the current file ~96 MB
+//   ahead of the decoder and the first 64 MB of the next one into the file cache, and ~40 s before a
+//   track ends the decoder opens the next file. A disk that is slow, seeking or spinning up is never
+//   waited on at a track change; the 20 s of decoded audio cover the rest.
 // - Sample rate: the stream runs at the rate of the album (the first track played). The engine's mixer
 //   converts it to the output device's rate with one converter that never restarts between tracks. A
 //   track with a different rate goes through a decoder-side converter that is kept across consecutive
@@ -33,9 +35,9 @@ final class Ring: @unchecked Sendable {
     let read = Atomic<Int>(0)
     let write = Atomic<Int>(0)
 
-    init(seconds: Double, rate: Double) {
+    init(seconds: Double, rate: Double, maxFrames: Int = .max) {
         var c = 1
-        while Double(c) < seconds * rate { c <<= 1 }
+        while Double(c) < seconds * rate && c < maxFrames { c <<= 1 }
         capacity = c
         mask = c - 1
         data = .allocate(capacity: c * 2)
@@ -81,6 +83,9 @@ final class RenderState: @unchecked Sendable {
     /// The decoder has written the last frame of the queue.
     let ended = Atomic<Bool>(false)
     let underruns = Atomic<Int>(0)
+    /// Audio has flowed since the last restart: from then on, an empty buffer is a dropout. Before, it is
+    /// the start waiting for the disk, which only delays the beginning.
+    let primed = Atomic<Bool>(false)
     let renderedFrames = Atomic<Int>(0)
     /// Fade gain, touched by the callback only.
     var gain: Float = 0
@@ -124,6 +129,8 @@ final class Decoder: @unchecked Sendable {
     private var stereo = [Float]()
     private let chunk: AVAudioFrameCount = 4096
 
+    let readAhead = ReadAhead()
+
     init(ring: Ring, rate: Double, state: RenderState) {
         self.ring = ring
         self.rate = rate
@@ -142,6 +149,7 @@ final class Decoder: @unchecked Sendable {
     func shutdown() {
         lock.withLock { $0.running = false }
         wake.signal()
+        readAhead.shutdown()
     }
 
     func setQueue(_ items: [QueueItem]) {
@@ -209,6 +217,7 @@ final class Decoder: @unchecked Sendable {
     private func reset(at id: UUID, offset: Double) {
         // The callback is on hold: the read position doesn't move, the buffer can be dropped.
         ring.write.store(ring.read.load(ordering: .acquiring), ordering: .releasing)
+        state.primed.store(false, ordering: .releasing)
         lock.withLock { $0.segments.removeAll() }
         state.ended.store(false, ordering: .releasing)
         file = nil
@@ -249,6 +258,7 @@ final class Decoder: @unchecked Sendable {
     }
 
     private func open(_ item: QueueItem) -> AVAudioFile? {
+        if let disk = readAhead.disk { disk.open(item.url); disk.read(item.url, 0..<65536) }
         guard let f = try? AVAudioFile(forReading: item.url, commonFormat: .pcmFormatFloat32, interleaved: true),
               f.processingFormat.channelCount > 0 else { return nil }
         return f
@@ -276,7 +286,16 @@ final class Decoder: @unchecked Sendable {
                 fileBuffer = AVAudioPCMBuffer(pcmFormat: f.processingFormat, frameCapacity: chunk)
             }
             let buf = fileBuffer!
+            if let disk = readAhead.disk, f.length > 0 {
+                // Simulated slow disk: reading what the read-ahead hasn't fetched costs disk time.
+                let size = fileSize(item.url)
+                let a = Int64(Double(size) * Double(f.framePosition) / Double(f.length))
+                let b = min(size, a + max(1, size * Int64(chunk) / f.length))
+                disk.read(item.url, a..<b)
+            }
             do { try f.read(into: buf, frameCount: chunk) } catch { buf.frameLength = 0 }
+            readAhead.follow(current: item.url, fraction: f.length > 0 ? Double(f.framePosition) / Double(f.length) : 0,
+                             next: after(item.id)?.url)
             let n = Int(buf.frameLength)
             if n > 0 {
                 // To stereo: mono is doubled, more channels keep front left/right.
@@ -315,18 +334,22 @@ final class Decoder: @unchecked Sendable {
         state.ended.store(true, ordering: .releasing)
     }
 
-    /// ~15 s before the end, open the next file and warm the page cache with its beginning.
+    private var sizes: [URL: Int64] = [:]
+    private func fileSize(_ url: URL) -> Int64 {
+        if let s = sizes[url] { return s }
+        let s = ((try? FileManager.default.attributesOfItem(atPath: url.path)[.size]) as? NSNumber)?.int64Value ?? 0
+        sizes[url] = s
+        return s
+    }
+
+    /// ~40 s before the end, open the next file (the read-ahead has fetched its beginning by then), so
+    /// the switch never waits on the disk.
     private func prefetchNext(remaining: Double) {
-        guard remaining < 15, let item = current, let n = after(item.id), next?.item.id != n.id else { return }
-        if let f = open(n) {
-            next = (n, f)
-            let fd = Darwin.open(n.url.path, O_RDONLY)
-            if fd >= 0 {
-                var ra = radvisory(ra_offset: 0, ra_count: 4 << 20)
-                _ = fcntl(fd, F_RDADVISE, &ra)
-                close(fd)
-            }
-        }
+        guard remaining < 40, let item = current, let n = after(item.id), next?.item.id != n.id else { return }
+        // Only once the read-ahead has fetched its beginning: opening a file still on a sleeping or busy
+        // disk would stall the decoder itself.
+        if readAhead.enabled, !readAhead.isWarm(n.url, 0..<min(fileSize(n.url), 65536)) { return }
+        if let f = open(n) { next = (n, f) }
     }
 
     /// The queue was reordered. Every track buffered after the one being heard must still follow it in
@@ -420,7 +443,10 @@ final class PlaybackEngine: @unchecked Sendable {
 
     init(rate: Double, manual: Bool = false, outputRate: Double? = nil) throws {
         self.rate = rate
-        ring = Ring(seconds: 4, rate: rate)
+        // ~20 s of decoded audio (8 MB at 44.1 kHz), at most 2^21 frames (16 MB) for high rates: enough to
+        // ride out a slow external disk spinning up or seeking, on top of the read-ahead.
+        let seconds = ProcessInfo.processInfo.environment["CD_RING_SECONDS"].flatMap(Double.init) ?? 20
+        ring = Ring(seconds: seconds, rate: rate, maxFrames: 1 << 21)
         decoder = Decoder(ring: ring, rate: rate, state: state)
         let fmt = AVAudioFormat(standardFormatWithSampleRate: rate, channels: 2)!
         let ring = ring, state = state
@@ -470,8 +496,11 @@ final class PlaybackEngine: @unchecked Sendable {
         if n < frames {
             (L + n).update(repeating: 0, count: frames - n)
             if R != L { (R + n).update(repeating: 0, count: frames - n) }
-            if !state.ended.load(ordering: .relaxed) && target == 1 { state.underruns.add(1, ordering: .relaxed) }
+            if !state.ended.load(ordering: .relaxed) && target == 1 && state.primed.load(ordering: .relaxed) {
+                state.underruns.add(1, ordering: .relaxed)
+            }
         }
+        if n > 0 { state.primed.store(true, ordering: .relaxed) }
         state.gain = g
         state.silent.store(g == 0, ordering: .releasing)
         ring.read.store(r + n, ordering: .releasing)
@@ -485,29 +514,52 @@ final class PlaybackEngine: @unchecked Sendable {
 
     /// Starts (or restarts) the stream at a track, with a fade in.
     func play(from id: UUID, offset: Double = 0, completion: @escaping @Sendable () -> Void = {}) {
+        let gen = commands.add(1, ordering: .acquiringAndReleasing).newValue
         control.async { [self] in
             fadeOut()
             state.hold.store(true, ordering: .releasing)
             decoder.restart(at: id, offset: offset)
+            let current = preroll(gen)
             state.hold.store(false, ordering: .releasing)
-            if !engine.isInManualRenderingMode, !engine.isRunning { try? engine.start() }
-            state.target.store(1, ordering: .releasing)
+            if current {
+                if !engine.isInManualRenderingMode, !engine.isRunning { try? engine.start() }
+                state.target.store(1, ordering: .releasing)
+            }
             completion()
         }
     }
 
+    /// Every transport command bumps this, so a wait in progress knows it has been overtaken.
+    private let commands = Atomic<Int>(0)
+    /// Audio buffered before a (re)start lets go: a slow disk then delays the start instead of making it stutter.
+    static let prerollSeconds = 1.5
+
+    /// Waits until `prerollSeconds` are buffered (or the queue ends, or another command arrives).
+    /// Returns false when another command came in meanwhile.
+    private func preroll(_ gen: Int) -> Bool {
+        let need = Int(Self.prerollSeconds * rate)
+        while ring.buffered < need && !state.ended.load(ordering: .acquiring) {
+            if commands.load(ordering: .acquiring) != gen { return false }
+            usleep(5000)
+        }
+        return commands.load(ordering: .acquiring) == gen
+    }
+
     /// Jumps to a track keeping the current play/pause state.
     func jump(to id: UUID, offset: Double = 0, playing: Bool) {
+        let gen = commands.add(1, ordering: .acquiringAndReleasing).newValue
         control.async { [self] in
             fadeOut()
             state.hold.store(true, ordering: .releasing)
             decoder.restart(at: id, offset: offset)
+            let current = playing ? preroll(gen) : true
             state.hold.store(false, ordering: .releasing)
-            if playing { state.target.store(1, ordering: .releasing) }
+            if playing && current { state.target.store(1, ordering: .releasing) }
         }
     }
 
     func pause() {
+        commands.add(1, ordering: .acquiringAndReleasing)
         control.async { [self] in
             fadeOut()
             if !engine.isInManualRenderingMode { engine.pause() }
@@ -515,6 +567,7 @@ final class PlaybackEngine: @unchecked Sendable {
     }
 
     func resume() {
+        commands.add(1, ordering: .acquiringAndReleasing)
         control.async { [self] in
             if !engine.isInManualRenderingMode, !engine.isRunning { try? engine.start() }
             state.target.store(1, ordering: .releasing)
@@ -522,6 +575,7 @@ final class PlaybackEngine: @unchecked Sendable {
     }
 
     func stop() {
+        commands.add(1, ordering: .acquiringAndReleasing)
         control.async { [self] in
             fadeOut()
             state.hold.store(true, ordering: .releasing)
