@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Covers embedded in WAV and AIFF files (an ID3 tag in an "id3 " chunk, as ffmpeg and most taggers write them) are shown: Core Audio reads their text but not their picture, so CD reads it itself.
 - The volume slider works: dragging it no longer moves the window (it is an AppKit control now). The scroll wheel over it changes the volume too.
 - Previous and next track use the double-arrow symbols of Apple Music.
 - Below the disc: the album while the CD is still; once it plays, the track's title on the first line and the album before the artist on the second. Texts change in place, fading and blurring out and back into focus, without sliding.

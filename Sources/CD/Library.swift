@@ -145,6 +145,8 @@ enum Library {
             var size = UInt32(MemoryLayout<Unmanaged<CFData>?>.size)
             if AudioFileGetProperty(fid, kAudioFilePropertyAlbumArtwork, &size, &art) == noErr, let data = art?.takeRetainedValue() as Data?,
                let img = downscale(data, maxPixels) { return img }
+            // WAV and AIFF: the picture of their ID3 chunk, which Core Audio doesn't return.
+            if let data = ChunkArtwork.read(t.url), let img = downscale(data, maxPixels) { return img }
         }
         let dirs = Array(Set(tracks.map { $0.url.deletingLastPathComponent() }))
         let fm = FileManager.default
